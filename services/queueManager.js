@@ -1,3 +1,4 @@
+const DurationCalculator = require("./durationCalculator");
 class QueueManager {
   constructor(databaseService, socketIo) {
     this.db = databaseService;
@@ -5,7 +6,7 @@ class QueueManager {
   }
 
   async addPatientToQueue(patientData) {
-    const { name, doctorId, estimatedDuration } = patientData;
+    const { name, doctorId } = patientData;
 
     const doctor = await this.db.getDoctorById(doctorId);
     if (!doctor) {
@@ -20,16 +21,34 @@ class QueueManager {
       throw new Error("Doctor has reached maximum daily patient capacity");
     }
 
+    const currentQueue = await this.db.getWaitingPatients(doctorId);
+    const queueLength = currentQueue.length;
+
+    const estimatedDuration = DurationCalculator.calculateEstimatedDuration(
+      doctor,
+      queueLength
+    );
+
+    const explanation = DurationCalculator.getCalculationExplanation(
+      doctor,
+      queueLength
+    );
+
     const patient = await this.db.createPatient({
       name: name.trim(),
       doctorId,
-      estimatedDuration: estimatedDuration || 15,
+      estimatedDuration,
     });
 
+    // Emit real-time updates
     await this.emitQueueUpdate(doctorId);
     await this.emitPatientAdded(patient.id, doctorId);
 
-    console.log(`Patient ${patient.name} added to doctor ${doctorId}'s queue`);
+    console.log(`Patient ${patient.name} added to ${doctor.name}'s queue:`);
+    console.log(`  - Estimated duration: ${estimatedDuration} minutes`);
+    console.log(`  - Calculation: ${explanation}`);
+    console.log(`  - Queue position: ${queueLength + 1}`);
+
     return patient;
   }
 
@@ -44,7 +63,6 @@ class QueueManager {
       throw new Error(`Patient with ID ${patientId} not found`);
     }
 
-    // Handle status transitions
     if (status === "consulting") {
       // Only one patient can be consulting at a time per doctor
       const consultingPatients = await this.db.getWaitingPatients(
@@ -60,7 +78,6 @@ class QueueManager {
       }
     }
 
-    // Update patient status
     const updatedPatient = await this.db.updatePatientStatus(patientId, status);
 
     // Auto-advance queue if consultation is completed
@@ -133,6 +150,9 @@ class QueueManager {
         const patientsAhead = position - 1;
         estimatedWaitTime = patientsAhead * patient.average_consultation_time;
       }
+      // throw new Error(
+      //   `Patient with ID ${patientId} is already in waiting queue # ${position}. Estimated wait time: ${estimatedWaitTime} minutes`
+      // );
     }
 
     return {
@@ -152,7 +172,12 @@ class QueueManager {
     const waitingPatients = await this.db.getWaitingPatients(doctorId);
     // New patient would be at the end of the queue
     const position = waitingPatients.length + 1;
-    return (position - 1) * doctor.average_consultation_time;
+    console.log({
+      waitingPatients,
+      position,
+      averageConsultationTime: doctor.average_consultation_time,
+    });
+    return position * doctor.average_consultation_time;
   }
 
   // Doctor Management
