@@ -1,74 +1,130 @@
 const express = require("express");
 const { body, param, query, validationResult } = require("express-validator");
 
+// Centralized error handling utilities
+class AppError extends Error {
+  constructor(message, statusCode, errorCode = null) {
+    super(message);
+    this.statusCode = statusCode;
+    this.errorCode = errorCode;
+    this.isOperational = true;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+// Error types for consistent error handling
+const ErrorTypes = {
+  VALIDATION: { statusCode: 400, errorCode: "VALIDATION_ERROR" },
+  NOT_FOUND: { statusCode: 404, errorCode: "NOT_FOUND" },
+  BAD_REQUEST: { statusCode: 400, errorCode: "BAD_REQUEST" },
+  UNAUTHORIZED: { statusCode: 401, errorCode: "UNAUTHORIZED" },
+  FORBIDDEN: { statusCode: 403, errorCode: "FORBIDDEN" },
+  CONFLICT: { statusCode: 409, errorCode: "CONFLICT" },
+  INTERNAL_SERVER: { statusCode: 500, errorCode: "INTERNAL_SERVER_ERROR" },
+};
+
+// Error response formatter
+const formatErrorResponse = (error, includeDetails = false) => {
+  const response = {
+    success: false,
+    error: error.errorCode || "ERROR",
+    message: error.message,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (includeDetails && process.env.NODE_ENV !== "production") {
+    response.details = error.stack;
+  }
+
+  return response;
+};
+
+// Error handler middleware
+const handleErrors = (error, req, res, next) => {
+  console.error("Error in queue routes:", error);
+
+  // Handle known application errors
+  if (error instanceof AppError) {
+    return res.status(error.statusCode).json(formatErrorResponse(error));
+  }
+
+  // Handle validation errors
+  if (error.name === "ValidationError") {
+    const appError = new AppError(
+      "Validation failed",
+      ErrorTypes.VALIDATION.statusCode,
+      ErrorTypes.VALIDATION.errorCode
+    );
+    return res.status(appError.statusCode).json(formatErrorResponse(appError));
+  }
+
+  // Handle database errors
+  if (error.code === "23505") {
+    const appError = new AppError(
+      "Resource already exists",
+      ErrorTypes.CONFLICT.statusCode,
+      ErrorTypes.CONFLICT.errorCode
+    );
+    return res.status(appError.statusCode).json(formatErrorResponse(appError));
+  }
+
+  // Handle unknown errors
+  const appError = new AppError(
+    "Internal server error",
+    ErrorTypes.INTERNAL_SERVER.statusCode,
+    ErrorTypes.INTERNAL_SERVER.errorCode
+  );
+
+  return res.status(appError.statusCode).json(formatErrorResponse(appError));
+};
+
 // Middleware for validation errors
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: "Validation Error",
-      message: "Invalid request data",
-      details: errors.array(),
-    });
+    const appError = new AppError(
+      "Invalid request data",
+      ErrorTypes.VALIDATION.statusCode,
+      ErrorTypes.VALIDATION.errorCode
+    );
+    appError.details = errors.array();
+    return res.status(appError.statusCode).json(formatErrorResponse(appError));
   }
   next();
 };
 
+// Enhanced async handler with error categorization
 const asyncHandler = (fn) => (req, res, next) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
+  Promise.resolve(fn(req, res, next)).catch((error) => {
+    // Categorize common error patterns
+    if (error.message.includes("not found")) {
+      const appError = new AppError(
+        error.message,
+        ErrorTypes.NOT_FOUND.statusCode,
+        ErrorTypes.NOT_FOUND.errorCode
+      );
+      return next(appError);
+    }
+
+    if (
+      error.message.includes("not available") ||
+      error.message.includes("Invalid status") ||
+      error.message.includes("already exists")
+    ) {
+      const appError = new AppError(
+        error.message,
+        ErrorTypes.BAD_REQUEST.statusCode,
+        ErrorTypes.BAD_REQUEST.errorCode
+      );
+      return next(appError);
+    }
+
+    next(error);
+  });
 };
 
 function createQueueRoutes(queueManager) {
   const router = express.Router();
-
-  router.post(
-    "/add-patient",
-    [
-      body("name")
-        .trim()
-        .isLength({ min: 1, max: 100 })
-        .withMessage("Name must be between 1 and 100 characters"),
-      body("doctorId").trim().notEmpty().withMessage("Doctor ID is required"),
-      body("estimatedDuration")
-        .optional()
-        .isInt({ min: 5, max: 60 })
-        .withMessage("Estimated duration must be between 5 and 60 minutes"),
-      handleValidationErrors,
-    ],
-    asyncHandler(async (req, res) => {
-      const { name, doctorId, estimatedDuration } = req.body;
-
-      try {
-        const patient = await queueManager.addPatientToQueue({
-          name,
-          doctorId,
-          estimatedDuration,
-        });
-
-        res.status(201).json({
-          success: true,
-          message: "Patient added to queue successfully",
-          data: {
-            patient,
-            estimatedWaitTime:
-              await queueManager.getEstimatedWaitTimeForNewPatient(doctorId),
-          },
-        });
-      } catch (error) {
-        if (
-          error.message.includes("not found") ||
-          error.message.includes("not available")
-        ) {
-          return res.status(400).json({
-            success: false,
-            error: "Bad Request",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
-    })
-  );
 
   router.get(
     "/patient/:patientId/status",
@@ -79,22 +135,11 @@ function createQueueRoutes(queueManager) {
     asyncHandler(async (req, res) => {
       const { patientId } = req.params;
 
-      try {
-        const queueStatus = await queueManager.getPatientQueueStatus(patientId);
-        res.json({
-          success: true,
-          data: queueStatus,
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      const queueStatus = await queueManager.getPatientQueueStatus(patientId);
+      res.json({
+        success: true,
+        data: queueStatus,
+      });
     })
   );
 
@@ -113,33 +158,15 @@ function createQueueRoutes(queueManager) {
       const { patientId } = req.params;
       const { status } = req.body;
 
-      try {
-        const updatedPatient = await queueManager.updatePatientStatus(
-          patientId,
-          status
-        );
-        res.json({
-          success: true,
-          message: "Patient status updated successfully",
-          data: updatedPatient,
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        if (error.message.includes("Invalid status")) {
-          return res.status(400).json({
-            success: false,
-            error: "Bad Request",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      const updatedPatient = await queueManager.updatePatientStatus(
+        patientId,
+        status
+      );
+      res.json({
+        success: true,
+        message: "Patient status updated successfully",
+        data: updatedPatient,
+      });
     })
   );
 
@@ -152,22 +179,21 @@ function createQueueRoutes(queueManager) {
     asyncHandler(async (req, res) => {
       const { patientId } = req.params;
 
-      try {
-        const removed = await queueManager.removePatientFromQueue(patientId);
-        if (removed) {
-          res.json({
-            success: true,
-            message: "Patient removed from queue successfully",
-          });
-        } else {
-          res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: "Patient not found",
-          });
-        }
-      } catch (error) {
-        throw error;
+      const removed = await queueManager.removePatientFromQueue(patientId);
+      if (removed) {
+        res.json({
+          success: true,
+          message: "Patient removed from queue successfully",
+        });
+      } else {
+        const appError = new AppError(
+          "Patient not found",
+          ErrorTypes.NOT_FOUND.statusCode,
+          ErrorTypes.NOT_FOUND.errorCode
+        );
+        return res
+          .status(appError.statusCode)
+          .json(formatErrorResponse(appError));
       }
     })
   );
@@ -181,27 +207,16 @@ function createQueueRoutes(queueManager) {
     asyncHandler(async (req, res) => {
       const { doctorId } = req.params;
 
-      try {
-        const queue = await queueManager.getDoctorQueue(doctorId);
-        const statistics = await queueManager.getQueueStatistics(doctorId);
+      const queue = await queueManager.getDoctorQueue(doctorId);
+      const statistics = await queueManager.getQueueStatistics(doctorId);
 
-        res.json({
-          success: true,
-          data: {
-            queue,
-            statistics,
-          },
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      res.json({
+        success: true,
+        data: {
+          queue,
+          statistics,
+        },
+      });
     })
   );
 
@@ -214,22 +229,11 @@ function createQueueRoutes(queueManager) {
     asyncHandler(async (req, res) => {
       const { doctorId } = req.params;
 
-      try {
-        const statistics = await queueManager.getQueueStatistics(doctorId);
-        res.json({
-          success: true,
-          data: statistics,
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      const statistics = await queueManager.getQueueStatistics(doctorId);
+      res.json({
+        success: true,
+        data: statistics,
+      });
     })
   );
 
@@ -242,27 +246,16 @@ function createQueueRoutes(queueManager) {
     asyncHandler(async (req, res) => {
       const { doctorId } = req.params;
 
-      try {
-        const estimatedWaitTime =
-          await queueManager.getEstimatedWaitTimeForNewPatient(doctorId);
-        res.json({
-          success: true,
-          data: {
-            doctorId,
-            estimatedWaitTime,
-            estimatedWaitTimeFormatted: formatWaitTime(estimatedWaitTime),
-          },
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      const estimatedWaitTime =
+        await queueManager.getEstimatedWaitTimeForNewPatient(doctorId);
+      res.json({
+        success: true,
+        data: {
+          doctorId,
+          estimatedWaitTime,
+          estimatedWaitTimeFormatted: formatWaitTime(estimatedWaitTime),
+        },
+      });
     })
   );
 
@@ -284,80 +277,55 @@ function createQueueRoutes(queueManager) {
       const { doctorId } = req.params;
       const { statusFilter = "waiting" } = req.body;
 
-      try {
-        const removedCount = await queueManager.clearDoctorQueue(
-          doctorId,
-          statusFilter
-        );
-        res.json({
-          success: true,
-          message: `Queue cleared successfully. Removed ${removedCount} patients.`,
-          data: {
-            removedCount,
-            statusFilter,
-          },
-        });
-      } catch (error) {
-        if (error.message.includes("not found")) {
-          return res.status(404).json({
-            success: false,
-            error: "Not Found",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+      const removedCount = await queueManager.clearDoctorQueue(
+        doctorId,
+        statusFilter
+      );
+      res.json({
+        success: true,
+        message: `Queue cleared successfully. Removed ${removedCount} patients.`,
+        data: {
+          removedCount,
+          statusFilter,
+        },
+      });
     })
   );
 
   router.get(
     "/dashboard/stats",
     asyncHandler(async (req, res) => {
-      try {
-        const stats = await queueManager.getDashboardStats();
-        res.json({
-          success: true,
-          data: stats,
-        });
-      } catch (error) {
-        throw error;
-      }
+      const stats = await queueManager.getDashboardStats();
+      res.json({
+        success: true,
+        data: stats,
+      });
     })
   );
 
   router.post(
     "/maintenance/cleanup",
     asyncHandler(async (req, res) => {
-      try {
-        const removedCount = await queueManager.performMaintenanceCleanup();
-        res.json({
-          success: true,
-          message: `Maintenance cleanup completed. Removed ${removedCount} old records.`,
-          data: {
-            removedCount,
-          },
-        });
-      } catch (error) {
-        throw error;
-      }
+      const removedCount = await queueManager.performMaintenanceCleanup();
+      res.json({
+        success: true,
+        message: `Maintenance cleanup completed. Removed ${removedCount} old records.`,
+        data: {
+          removedCount,
+        },
+      });
     })
   );
 
   router.get(
     "/health",
     asyncHandler(async (req, res) => {
-      try {
-        const health = await queueManager.getHealthStatus();
-        res.json(health);
-      } catch (error) {
-        res.status(500).json({
-          status: "unhealthy",
-          error: error.message,
-          timestamp: new Date().toISOString(),
-        });
-      }
+      const health = await queueManager.getHealthStatus();
+      res.json(health);
     })
   );
+
+  router.use(handleErrors);
 
   return router;
 }
@@ -371,4 +339,4 @@ function formatWaitTime(minutes) {
   return `${hours}h ${Math.round(remainingMinutes)}m`;
 }
 
-module.exports = createQueueRoutes;
+module.exports = { createQueueRoutes, handleErrors, AppError, ErrorTypes };
