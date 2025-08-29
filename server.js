@@ -37,6 +37,7 @@ const doctorRoutes = require("./routes/doctors");
 const patientRoutes = require("./routes/patients");
 const QueueManager = require("./services/queueManager");
 const DatabaseService = require("./services/database");
+const { setRoomId } = require("./services");
 
 const app = express();
 const server = http.createServer(app);
@@ -128,7 +129,6 @@ app.use(
 // Ensure preflight requests are handled for all routes
 app.options("*", cors(corsConfig));
 
-// Friendly JSON for CORS denials in strict mode
 app.use((err, req, res, next) => {
   if (err && err.message && err.message.toLowerCase().includes("cors")) {
     return res.status(403).json({
@@ -161,7 +161,6 @@ app.get("/health", (req, res) => {
   });
 });
 
-// API Routes
 app.use("/api/queue", createQueueRoutes(queueManager));
 app.use("/api/doctors", doctorRoutes(queueManager));
 app.use("/api/patients", patientRoutes(queueManager));
@@ -203,7 +202,7 @@ io.on("connection", (socket) => {
         );
       }
 
-      const roomId = `doctor_${doctor_id}`;
+      const roomId = setRoomId(doctor_id);
 
       const queueStatus = await queueManager.getPatientQueueStatus(patientId);
 
@@ -229,7 +228,7 @@ io.on("connection", (socket) => {
 
   socket.on("joinDoctorRoom", async (data) => {
     const { doctorId } = data;
-    const roomId = `doctor_${doctorId}`;
+    const roomId = setRoomId(doctorId);
 
     await socket.join(roomId);
     socket.userId = doctorId;
@@ -308,7 +307,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
 app.use("*", (req, res) => {
   res.status(404).json({
     error: "Not Found",
@@ -316,7 +314,6 @@ app.use("*", (req, res) => {
   });
 });
 
-// Initialize database and start server
 async function startServer() {
   try {
     await databaseService.initialize();

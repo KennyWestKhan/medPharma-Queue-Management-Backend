@@ -143,13 +143,12 @@ class QueueManager {
     let position = 0;
     let estimatedWaitTime = 0;
 
-    if (patient.status === "waiting") {
+    if (patient.status === "waiting" && position > 0) {
       position = await this.db.getPatientQueuePosition(patientId);
-      if (position > 0) {
-        // Calculate estimated wait time based on position and doctor's average consultation time
-        const patientsAhead = position - 1;
-        estimatedWaitTime = patientsAhead * patient.average_consultation_time;
-      }
+
+      const patientsAhead = position - 1;
+      estimatedWaitTime = patientsAhead * patient.average_consultation_time;
+
       // throw new Error(
       //   `Patient with ID ${patientId} is already in waiting queue # ${position}. Estimated wait time: ${estimatedWaitTime} minutes`
       // );
@@ -180,7 +179,6 @@ class QueueManager {
     return position * doctor.average_consultation_time;
   }
 
-  // Doctor Management
   async getAllDoctors() {
     return this.db.getAllDoctors();
   }
