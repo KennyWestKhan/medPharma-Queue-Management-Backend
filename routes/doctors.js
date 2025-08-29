@@ -80,32 +80,49 @@ function createDoctorRoutes(queueManager) {
 
         // Get additional queue information
         const queueStats = await queueManager.getQueueStatistics(doctorId);
-        const currentQueue = await queueManager.getDoctorQueue(doctorId);
-
-        const transformedDoctor = {
-          id: doctor.id,
-          name: doctor.name,
-          specialization: doctor.specialization,
-          isAvailable: doctor.is_available,
-          averageConsultationTime: doctor.average_consultation_time,
-          maxDailyPatients: doctor.max_daily_patients,
-          consultationFee: doctor.consultation_fee,
-          bio: doctor.bio,
-          profileImageUrl: doctor.profile_image_url,
-          currentPatientCount: parseInt(doctor.current_patient_count) || 0,
-          waitingPatientCount: parseInt(doctor.waiting_patient_count) || 0,
-          isAtCapacity:
-            parseInt(doctor.current_patient_count) >= doctor.max_daily_patients,
-          createdAt: doctor.created_at,
-          updatedAt: doctor.updated_at,
-          queueStats,
-          currentQueue: currentQueue.map((patient) => ({
+        let currentQueue = await queueManager
+          .getDoctorQueue(doctorId)
+          .map((patient) => ({
             id: patient.id,
             name: patient.name,
             status: patient.status,
             joinedAt: patient.joined_at,
             estimatedDuration: patient.estimated_duration,
-          })),
+          }));
+
+        const {
+          id,
+          name,
+          specialization,
+          is_available,
+          average_consultation_time,
+          max_daily_patients,
+          consultation_fee,
+          bio,
+          profile_image_url,
+          current_patient_count,
+          waiting_patient_count,
+          created_at,
+          updated_at,
+        } = doctor;
+
+        const transformedDoctor = {
+          id,
+          name,
+          specialization,
+          isAvailable: is_available,
+          averageConsultationTime: average_consultation_time,
+          maxDailyPatients: max_daily_patients,
+          consultationFee: consultation_fee,
+          bio,
+          profileImageUrl: profile_image_url,
+          currentPatientCount: parseInt(current_patient_count) || 0,
+          waitingPatientCount: parseInt(waiting_patient_count) || 0,
+          isAtCapacity: parseInt(current_patient_count) >= max_daily_patients,
+          createdAt: created_at,
+          updatedAt: updated_at,
+          queueStats,
+          currentQueue,
         };
 
         res.json({
