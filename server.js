@@ -11,10 +11,17 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const medPharmaDomain = "https://medPharmaDomain.com";
-const origin =
+// CORS configuration
+const corsConfig =
   process.env.NODE_ENV === "production"
-    ? [medPharmaDomain]
-    : ["http://localhost:3000"];
+    ? {
+        origin: [medPharmaDomain],
+        credentials: true,
+      }
+    : {
+        origin: true, // Allow all origins in development
+        credentials: true,
+      };
 
 const {
   DB_HOST = "",
@@ -25,7 +32,7 @@ const {
   NODE_ENV,
 } = process.env;
 
-const queueRoutes = require("./routes/queue");
+const { createQueueRoutes } = require("./routes/queue");
 const doctorRoutes = require("./routes/doctors");
 const patientRoutes = require("./routes/patients");
 const QueueManager = require("./services/queueManager");
@@ -36,7 +43,7 @@ const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin,
+    origin: corsConfig.origin,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -62,12 +69,78 @@ app.use(
   })
 );
 
-app.use(
-  cors({
-    origin,
-    credentials: true,
-  })
-);
+// const CORS_STRATEGY = process.env.CORS_STRATEGY || "permissive";
+
+// if (CORS_STRATEGY === "strict") {
+//   app.use(
+//     cors({
+//       origin: function (origin, callback) {
+//         // Allow requests with no origin (like mobile apps, Postman, local HTML files)
+//         if (!origin) {
+//           console.info("Request with no origin - allowing");
+//           return callback(null, true);
+//         }
+
+//         const allowedOrigins = [
+//           "http://localhost:3000",
+//           "http://localhost:3001",
+//           "http://127.0.0.1:3000",
+//           "http://127.0.0.1:3001",
+//           "exp://192.168.1.100:8081",
+//           "file://",
+//           "null",
+//         ];
+
+//         console.info("Request origin:", origin);
+
+//         // Check if origin matches any allowed pattern
+//         const isAllowed = allowedOrigins.some((allowed) => {
+//           if (allowed === "file://") {
+//             return origin.startsWith("file://");
+//           }
+//           if (allowed === "null") {
+//             return origin === "null";
+//           }
+//           return origin === allowed || origin.startsWith(allowed);
+//         });
+
+//         if (isAllowed) {
+//           console.info("Origin allowed:", origin);
+//           callback(null, true);
+//         } else {
+//           console.warn("Origin blocked:", origin);
+//           callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+//         }
+//       },
+//       credentials: true,
+//       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+//       allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+//       optionsSuccessStatus: 200,
+//     })
+//   );
+// }
+{
+  // Permissive CORS for development
+  app.use(cors(corsConfig));
+  console.info("Using permissive CORS strategy for development");
+}
+
+// Ensure preflight requests are handled for all routes
+app.options("*", cors(corsConfig));
+
+// Friendly JSON for CORS denials in strict mode
+app.use((err, req, res, next) => {
+  if (err && err.message && err.message.toLowerCase().includes("cors")) {
+    return res.status(403).json({
+      success: false,
+      error: "CORS_FORBIDDEN",
+      message: err.message,
+      origin: req.headers.origin || null,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  next(err);
+});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -89,7 +162,7 @@ app.get("/health", (req, res) => {
 });
 
 // API Routes
-app.use("/api/queue", queueRoutes(queueManager));
+app.use("/api/queue", createQueueRoutes(queueManager));
 app.use("/api/doctors", doctorRoutes(queueManager));
 app.use("/api/patients", patientRoutes(queueManager));
 
@@ -97,21 +170,60 @@ io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   socket.on("joinPatientRoom", async (data) => {
-    const { patientId, doctorId } = data;
-    const roomId = `doctor_${doctorId}`;
-
-    await socket.join(roomId);
-    socket.userId = patientId;
-    socket.userType = "patient";
-    socket.doctorId = doctorId;
-
-    console.log(`Patient ${patientId} joined room ${roomId}`);
+    function validateUUID(id) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id
+      );
+    }
 
     try {
+      if (!data || !data?.patientId) {
+        throw new Error("Patient ID is required");
+      }
+
+      const { patientId } = data;
+
+      if (!validateUUID(patientId)) {
+        throw new Error(`Invalid patient ID format: ${patientId}`);
+      }
+
+      const patient = await queueManager.getPatient(patientId);
+
+      if (!patient) {
+        throw new Error(`Patient ${patientId} not found`);
+      }
+
+      console.info({ patient });
+
+      const { doctor_id, name: patientName } = patient;
+
+      if (!doctor_id) {
+        throw new Error(
+          `Patient ${patientName} with ID ${patientId} is not assigned to a doctor`
+        );
+      }
+
+      const roomId = `doctor_${doctor_id}`;
+
       const queueStatus = await queueManager.getPatientQueueStatus(patientId);
+
+      await socket.join(roomId);
+
+      socket.userId = patientId;
+      socket.userType = "patient";
+      socket.doctorId = doctor_id;
+
+      console.log(`Patient ${patientId} joined room ${roomId}`);
+
       socket.emit("queueUpdate", queueStatus);
     } catch (error) {
-      socket.emit("error", { message: error.message });
+      console.error("Error in joinPatientRoom:", error);
+
+      socket.emit("error", {
+        message: error.message,
+        code: error.code || "JOIN_ROOM_ERROR",
+        timestamp: new Date().toISOString(),
+      });
     }
   });
 
