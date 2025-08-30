@@ -194,7 +194,9 @@ class DatabaseService {
     `,
       [name, doctorId, estimatedDuration]
     );
-    return rows[0];
+
+    const patientWithDoctor = await this.getPatientById(rows[0].id);
+    return patientWithDoctor;
   }
 
   async getPatientById(patientId) {

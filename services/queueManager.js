@@ -34,6 +34,8 @@ class QueueManager {
       queueLength
     );
 
+    const positionInQueue = queueLength + 1;
+
     const patient = await this.db.createPatient({
       name: name.trim(),
       doctorId,
@@ -47,7 +49,9 @@ class QueueManager {
     console.log(`Patient ${patient.name} added to ${doctor.name}'s queue:`);
     console.log(`  - Estimated duration: ${estimatedDuration} minutes`);
     console.log(`  - Calculation: ${explanation}`);
-    console.log(`  - Queue position: ${queueLength + 1}`);
+    console.log(`  - Queue position: ${positionInQueue}`);
+
+    patient.positionInQueue = positionInQueue;
 
     return patient;
   }
