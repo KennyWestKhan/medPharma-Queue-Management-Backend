@@ -80,15 +80,18 @@ function createDoctorRoutes(queueManager) {
 
         // Get additional queue information
         const queueStats = await queueManager.getQueueStatistics(doctorId);
-        let currentQueue = await queueManager
-          .getDoctorQueue(doctorId)
-          .map((patient) => ({
-            id: patient.id,
-            name: patient.name,
-            status: patient.status,
-            joinedAt: patient.joined_at,
-            estimatedDuration: patient.estimated_duration,
-          }));
+        let currentQueue = await queueManager.getDoctorQueue(doctorId);
+        console.log({ currentQueue });
+        if (!Array.isArray(currentQueue)) {
+          currentQueue = [];
+        }
+        currentQueue = currentQueue.map((patient) => ({
+          id: patient.id,
+          name: patient.name,
+          status: patient.status,
+          joinedAt: patient.joined_at,
+          estimatedDuration: patient.estimated_duration,
+        }));
 
         const {
           id,
@@ -221,26 +224,27 @@ function createDoctorRoutes(queueManager) {
             waitingTime: calculateWaitingTime(patient.joined_at),
           };
         });
+        const data = {
+          doctor: {
+            id: doctor.id,
+            name: doctor.name,
+            specialization: doctor.specialization,
+            isAvailable: doctor.is_available,
+            averageConsultationTime: doctor.average_consultation_time,
+          },
+          queue: enhancedQueue,
+          statistics,
+          queueSummary: {
+            total: queue.length,
+            waiting: queue.filter((p) => p.status === "waiting").length,
+            consulting: queue.filter((p) => p.status === "consulting").length,
+            completed: queue.filter((p) => p.status === "completed").length,
+          },
+        };
 
         res.json({
           success: true,
-          data: {
-            doctor: {
-              id: doctor.id,
-              name: doctor.name,
-              specialization: doctor.specialization,
-              isAvailable: doctor.is_available,
-              averageConsultationTime: doctor.average_consultation_time,
-            },
-            queue: enhancedQueue,
-            statistics,
-            queueSummary: {
-              total: queue.length,
-              waiting: queue.filter((p) => p.status === "waiting").length,
-              consulting: queue.filter((p) => p.status === "consulting").length,
-              completed: queue.filter((p) => p.status === "completed").length,
-            },
-          },
+          data,
         });
       } catch (error) {
         throw error;
