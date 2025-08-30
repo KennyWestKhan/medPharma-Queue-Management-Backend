@@ -40,6 +40,10 @@ const DatabaseService = require("./services/database");
 const { setRoomId } = require("./services");
 
 const app = express();
+
+// Trust proxy - required when behind a reverse proxy like nginx, load balancer, or using ngrok
+app.set("trust proxy", 1);
+
 const server = http.createServer(app);
 
 const io = socketIo(server, {
@@ -143,7 +147,9 @@ app.use((err, req, res, next) => {
 });
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  // use the client's real IP from X-Forwarded-For cos of ngrok proxy
+  trustProxy: true,
   max: 100,
   message: "Too many requests from this IP, please try again later.",
 });
