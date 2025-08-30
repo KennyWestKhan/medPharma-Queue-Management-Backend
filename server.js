@@ -226,6 +226,11 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("reconnect", (attemptNumber) => {
+    console.log("🔄 Reconnected after", attemptNumber, "attempts");
+    this.isConnected = true;
+  });
+
   socket.on("joinDoctorRoom", async (data) => {
     const { doctorId } = data;
     const roomId = setRoomId(doctorId);
@@ -320,7 +325,9 @@ async function startServer() {
     console.log("Database connected and initialized");
 
     const PORT = process.env.PORT || 3001;
-    server.listen(PORT, () => {
+    const HOST = process.env.HOST || "0.0.0.0";
+
+    server.listen(PORT, HOST, () => {
       console.log(`Server running on http://localhost:${PORT}`);
       console.log(`Socket.io ready for connections`);
     });
