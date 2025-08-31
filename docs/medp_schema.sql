@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS patients (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(100) NOT NULL,
     doctor_id VARCHAR(50) NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
-    status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'next', 'consulting', 'completed')),
+    status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'next', 'consulting', 'completed','late')),
     estimated_duration INTEGER DEFAULT 15,
     joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     consultation_started_at TIMESTAMP,
@@ -108,6 +108,7 @@ SELECT
     d.average_consultation_time,
     COUNT(CASE WHEN p.status != 'completed' THEN 1 END) as current_patient_count,
     COUNT(CASE WHEN p.status = 'waiting' THEN 1 END) as waiting_patient_count,
+    COUNT(CASE WHEN p.status = 'late' THEN 1 END) as late_patient_count,
     COUNT(CASE WHEN p.status = 'consulting' THEN 1 END) as consulting_patient_count,
     COUNT(CASE WHEN p.status = 'completed' AND DATE(p.created_at) = CURRENT_DATE THEN 1 END) as completed_today
 FROM doctors d
@@ -208,6 +209,7 @@ SELECT
     d.is_available,
     COUNT(p.id) as total_patients,
     COUNT(CASE WHEN p.status = 'waiting' THEN 1 END) as waiting,
+    COUNT(CASE WHEN p.status = 'late' THEN 1 END) as late,
     COUNT(CASE WHEN p.status = 'next' THEN 1 END) as next_up,
     COUNT(CASE WHEN p.status = 'consulting' THEN 1 END) as consulting,
     COUNT(CASE WHEN p.status = 'completed' THEN 1 END) as completed

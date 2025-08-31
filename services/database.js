@@ -33,7 +33,7 @@ class DatabaseService {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(100) NOT NULL,
         doctor_id VARCHAR(50) NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
-        status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'next', 'consulting', 'completed')),
+        status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'next', 'consulting', 'completed', 'late')),
         estimated_duration INTEGER DEFAULT 15,
         joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         consultation_started_at TIMESTAMP,
@@ -212,15 +212,17 @@ class DatabaseService {
     return rows[0] || null;
   }
 
-  async updatePatientStatus(patientId, status) {
+  async updatePatientStatus(patientId, status, reason = "") {
     let updateFields = "status = $1";
-    let params = [status, patientId];
+    let params = [status, patientId, reason];
 
     if (status === "consulting") {
       updateFields += ", consultation_started_at = CURRENT_TIMESTAMP";
     } else if (status === "completed") {
       updateFields += ", consultation_ended_at = CURRENT_TIMESTAMP";
     }
+
+    console.log("Updating patient status:", { patientId, status, reason });
 
     const { rows } = await this.pool.query(
       `

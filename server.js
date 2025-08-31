@@ -194,6 +194,204 @@ io.on("connection", (socket) => {
     );
   }
 
+  async function handlePatientUpdate(
+    event,
+    { patientId, doctorId, status, reason = "" }
+  ) {
+    try {
+      console.log(`Handling ${event} - Socket details:`, {
+        socketId: socket.id,
+        userType: socket.userType,
+        socketDoctorId: socket.doctorId,
+        receivedDoctorId: doctorId,
+        patientId,
+        hasUserType: !!socket.userType,
+        isDoctor: socket.userType === "doctor",
+      });
+
+      if (socket.userType !== "doctor") {
+        console.log("AUTHORIZATION FAILED:", {
+          expectedType: "doctor",
+          actualType: socket.userType,
+        });
+        throw new Error("Unauthorized: Only doctors can update patient status");
+      }
+
+      if (!patientId || !doctorId) {
+        throw new Error("Missing patientId or doctorId");
+      }
+
+      const newStatus = event === "startConsultation" ? "consulting" : status;
+      const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+
+      await queueManager.updatePatientStatus(patientId, newStatus, reason);
+
+      const patient = await queueManager.getPatient(patientId);
+      const doctor = await queueManager.getDoctor(doctorId);
+
+      if (status === "startConsultation") {
+        io.to(doctorPatientRoom).emit("consultationStarted", {
+          patient,
+          doctor,
+        });
+      } else if (status === "completed") {
+        await this.autoAdvanceQueue(doctorId); // Auto-advance queue if consultation is completed
+      } else {
+        io.to(doctorPatientRoom).emit("patientStatusUpdated", {
+          patient,
+          doctor,
+          patientId,
+          status: newStatus,
+          reason,
+        });
+      }
+
+      const updatedQueue = await queueManager.getDoctorQueue(doctorId);
+      io.to(`doctor:${doctorId}`).emit("queueChanged", {
+        queue: updatedQueue,
+      });
+
+      console.log(`${event} handled successfully`);
+    } catch (error) {
+      console.error(`Error in ${event}:`, error);
+      socket.emit("error", {
+        message: error.message,
+        code: `${event.toUpperCase()}_ERROR`,
+      });
+    }
+  }
+
+  socket.on("startConsultation", (payload) =>
+    handlePatientUpdate("startConsultation", payload)
+  );
+
+  socket.on("updatePatientStatus", (payload) =>
+    handlePatientUpdate("updatePatientStatus", payload)
+  );
+
+  socket.on("completeConsultation", async ({ patientId, doctorId }) => {
+    try {
+      console.log("Completing consultation:", {
+        patientId,
+        doctorId,
+        userType: socket.userType,
+        socketId: socket.id,
+      });
+
+      if (socket.userType !== "doctor") {
+        throw new Error(
+          "Unauthorized: Only doctors can complete consultations"
+        );
+      }
+
+      if (!patientId || !doctorId) {
+        throw new Error("Missing patientId or doctorId");
+      }
+
+      await queueManager.updatePatientStatus(patientId, "completed");
+
+      const patient = await queueManager.getPatient(patientId);
+      const doctor = await queueManager.getDoctor(doctorId);
+
+      // Send update to specific patient's room
+      const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+      io.to(doctorPatientRoom).emit("consultationCompleted", {
+        patient,
+        doctor,
+      });
+
+      // Update doctor's queue
+      const updatedQueue = await queueManager.getDoctorQueue(doctorId);
+      io.to(`doctor:${doctorId}`).emit("queueChanged", { queue: updatedQueue });
+
+      console.log("Consultation completed successfully");
+    } catch (error) {
+      console.error("Error completing consultation:", error);
+      socket.emit("error", {
+        message: error.message,
+        code: "COMPLETE_CONSULTATION_ERROR",
+      });
+    }
+  });
+
+  socket.on(
+    "removePatientFromQueue",
+    async ({ patientId, doctorId, reason }) => {
+      try {
+        console.log("=== REMOVE PATIENT REQUEST RECEIVED ===");
+        console.log("Request details:", {
+          patientId,
+          doctorId,
+          reason,
+          userType: socket.userType,
+          socketDoctorId: socket.doctorId,
+          socketId: socket.id,
+          timestamp: new Date().toISOString(),
+        });
+
+        if (socket.userType !== "doctor") {
+          console.log("UNAUTHORIZED: userType is not doctor:", socket.userType);
+          throw new Error("Unauthorized: Only doctors can remove patients");
+        }
+
+        if (!patientId || !doctorId) {
+          console.log("MISSING PARAMETERS:", { patientId, doctorId });
+          throw new Error("Missing patientId or doctorId");
+        }
+
+        console.log("Fetching patient from database...");
+        const patient = await queueManager.getPatient(patientId);
+        if (!patient) {
+          console.log("PATIENT NOT FOUND:", patientId);
+          throw new Error("Patient not found");
+        }
+
+        console.log("Patient found:", { id: patient.id, name: patient.name });
+
+        console.log("Removing patient from queue...");
+        await queueManager.removePatientFromQueue(patientId);
+        console.log("Patient successfully removed from database");
+
+        const doctor = await queueManager.getDoctor(doctorId);
+        const eventData = { patient, doctor, reason };
+
+        // Notify the specific patient room
+        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+        const doctorRoom = `doctor:${doctorId}`;
+
+        console.log("Emitting events to rooms:", {
+          doctorPatientRoom,
+          doctorRoom,
+        });
+
+        io.to(doctorPatientRoom).emit("patientRemoved", eventData);
+
+        // Get updated queue and notify doctor's room
+        const updatedQueue = await queueManager.getDoctorQueue(doctorId);
+        console.log("Updated queue length:", updatedQueue.length);
+        io.to(doctorRoom).emit("queueChanged", { queue: updatedQueue });
+
+        // Send success response back to the requesting doctor
+        console.log("Sending success response to socket:", socket.id);
+        socket.emit("removePatientFromQueueResponse", {
+          success: true,
+          message: "Patient removed successfully",
+          patient,
+          timestamp: new Date().toISOString(),
+        });
+
+        console.log("=== PATIENT REMOVAL COMPLETED SUCCESSFULLY ===");
+      } catch (error) {
+        console.error("=== ERROR REMOVING PATIENT ===", error);
+        socket.emit("removePatientFromQueueResponse", {
+          success: false,
+          message: error.message,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  );
+
   // Join patient's room with validation
   socket.on("joinPatientRoom", async (data) => {
     try {
@@ -256,10 +454,12 @@ io.on("connection", (socket) => {
   // Join doctor's room with validation
   socket.on("joinDoctorRoom", async (data) => {
     try {
+      console.log("=== JOIN DOCTOR ROOM REQUEST ===");
       const { doctorId } = data;
+      console.log("Doctor ID:", doctorId);
 
       if (!doctorId) {
-        throw new Error(`Invalid doctor ID format: ${doctorId}`);
+        throw new Error("Doctor ID is required");
       }
 
       // Create doctor's private room
@@ -273,55 +473,34 @@ io.on("connection", (socket) => {
       socket.privateRoom = doctorPrivateRoom;
 
       console.log(`Doctor ${doctorId} joined room ${doctorPrivateRoom}`);
+      console.log("Socket user type set to:", socket.userType);
+
+      socket.emit("doctorRoomJoined", {
+        success: true,
+        doctorId,
+        message: "Successfully joined doctor room",
+      });
 
       // Get queue and current patients
       const queue = await queueManager.getDoctorQueue(doctorId);
+      console.log("Doctor queue fetched, patient count:", queue.length);
 
       // Join individual rooms for each patient in the queue
       for (const patient of queue) {
         const doctorPatientRoom = `doctor:${doctorId}:patient:${patient.id}`;
         await socket.join(doctorPatientRoom);
         currentRooms.add(doctorPatientRoom);
-        console.log(`Doctor joined patient room: ${doctorPatientRoom}`);
+        console.log(
+          `Doctor ${doctorId} joined patient room: ${doctorPatientRoom}`
+        );
       }
 
+      console.log({ currentRooms });
+
       socket.emit("queueChanged", { queue });
-
-      // Set up consultation event handlers for doctors
-      socket.on("startConsultation", async ({ patientId }) => {
-        if (socket.userType !== "doctor") return;
-        await queueManager.updatePatientStatus(patientId, "consulting");
-        // Send update only to specific patient's room
-        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
-        io.to(doctorPatientRoom).emit("consultationStarted", {
-          patient: await queueManager.getPatient(patientId),
-          doctor: await queueManager.getDoctor(doctorId),
-        });
-      });
-
-      socket.on("completeConsultation", async ({ patientId }) => {
-        if (socket.userType !== "doctor") return;
-        await queueManager.updatePatientStatus(patientId, "completed");
-        // Send update only to specific patient's room
-        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
-        io.to(doctorPatientRoom).emit("consultationCompleted", {
-          patient: await queueManager.getPatient(patientId),
-          doctor: await queueManager.getDoctor(doctorId),
-        });
-      });
-
-      socket.on("removePatient", async ({ patientId, reason }) => {
-        if (socket.userType !== "doctor") return;
-        await queueManager.removePatientFromQueue(patientId);
-        // Send update only to specific patient's room
-        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
-        io.to(doctorPatientRoom).emit("patientRemoved", {
-          patient: await queueManager.getPatient(patientId),
-          doctor: await queueManager.getDoctor(doctorId),
-          reason,
-        });
-      });
+      console.log("=== DOCTOR ROOM SETUP COMPLETED ===");
     } catch (error) {
+      console.error("Error in joinDoctorRoom:", error);
       socket.emit("error", {
         message: error.message,
         code: error.code || "JOIN_ROOM_ERROR",
@@ -346,11 +525,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("reconnect", (attemptNumber) => {
-    console.log("🔄 Reconnected after", attemptNumber, "attempts");
-    socket.emit("reconnected", { attemptNumber });
-  });
-
   socket.on("leaveRoom", async (data) => {
     const { roomId } = data;
     await socket.leave(roomId);
@@ -359,12 +533,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    // Cleanup all rooms on disconnect
     currentRooms.forEach(async (roomId) => {
       await socket.leave(roomId);
     });
     currentRooms.clear();
     console.log(`Client disconnected: ${socket.id}`);
+  });
+
+  socket.onAny((eventName, ...args) => {
+    console.log(`Socket event received: ${eventName}`, args);
   });
 });
 

@@ -1,0 +1,319 @@
+# WebSocket Events Documentation for MedPharma Queue Management System
+
+paths:
+  /websocket:
+    get:
+      tags:
+        - WebSocket Events
+      summary: WebSocket Connection Endpoint
+      description: |
+        # WebSocket Real-time Communication
+
+        The MedPharma Queue Management System uses WebSocket connections for real-time updates between patients and doctors.
+
+        ## Connection URL
+        ```
+        ws://localhost:3001/socket.io/
+        ```
+
+        ## Client-to-Server Events
+
+        ### `joinPatientRoom`
+        Patient joins a doctor's room to receive real-time queue updates.
+
+        **Payload:**
+        ```javascript
+        socket.emit('joinPatientRoom', {
+          patientId: '123e4567-e89b-12d3-a456-426614174000',
+          doctorId: 'doc1'
+        });
+        ```
+
+        ### `joinDoctorRoom`
+        Doctor joins their room to receive queue management updates.
+
+        **Payload:**
+        ```javascript
+        socket.emit('joinDoctorRoom', {
+          doctorId: 'doc1'
+        });
+        ```
+
+        ### `updatePatientStatus`
+        Update a patient's status in the queue.
+
+        **Payload:**
+        ```javascript
+        socket.emit('updatePatientStatus', {
+          patientId: '123e4567-e89b-12d3-a456-426614174000',
+          status: 'consulting' // 'waiting' | 'next' | 'consulting' | 'completed'
+        });
+        ```
+
+        ### `updateDoctorAvailability`
+        Update doctor's availability status.
+
+        **Payload:**
+        ```javascript
+        socket.emit('updateDoctorAvailability', {
+          doctorId: 'doc1',
+          isAvailable: true
+        });
+        ```
+
+        ### `leaveRoom`
+        Leave a specific room.
+
+        **Payload:**
+        ```javascript
+        socket.emit('leaveRoom', {
+          roomId: 'doctor_doc1'
+        });
+        ```
+
+        ## Server-to-Client Events
+
+        ### `queueUpdate`
+        Sent when a patient's queue position or wait time changes.
+
+        **Payload:**
+        ```javascript
+        socket.on('queueUpdate', (data) => {
+          console.log(data);
+          // {
+          //   patientId: '123e4567-e89b-12d3-a456-426614174000',
+          //   position: 2,
+          //   estimatedWaitTime: 30
+          // }
+        });
+        ```
+
+        ### `patientStatusUpdate`
+        Sent when any patient's status changes.
+
+        **Payload:**
+        ```javascript
+        socket.on('patientStatusUpdate', (data) => {
+          console.log(data);
+          // {
+          //   patientId: '123e4567-e89b-12d3-a456-426614174000',
+          //   status: 'consulting'
+          // }
+        });
+        ```
+
+        ### `queueChanged`
+        Sent when the doctor's queue is modified (patients added/removed).
+
+        **Payload:**
+        ```javascript
+        socket.on('queueChanged', (data) => {
+          console.log(data);
+          // {
+          //   queue: [
+          //     {
+          //       id: '123e4567-e89b-12d3-a456-426614174000',
+          //       name: 'John Doe',
+          //       status: 'waiting',
+          //       joinedAt: '2024-01-15T10:30:00Z',
+          //       // ... other patient fields
+          //     }
+          //   ]
+          // }
+        });
+        ```
+
+        ### `doctorAvailabilityUpdate`
+        Sent when a doctor's availability changes.
+
+        **Payload:**
+        ```javascript
+        socket.on('doctorAvailabilityUpdate', (data) => {
+          console.log(data);
+          // {
+          //   doctorId: 'doc1',
+          //   isAvailable: false
+          // }
+        });
+        ```
+
+        ### `patientAdded`
+        Sent when a new patient joins the queue.
+
+        **Payload:**
+        ```javascript
+        socket.on('patientAdded', (patient) => {
+          console.log(patient);
+          // Complete patient object with all fields
+        });
+        ```
+
+        ### `patientRemoved`
+        Sent when a patient is removed from the queue.
+
+        **Payload:**
+        ```javascript
+        socket.on('patientRemoved', (data) => {
+          console.log(data);
+          // {
+          //   patientId: '123e4567-e89b-12d3-a456-426614174000'
+          // }
+        });
+        ```
+
+        ### `error`
+        Sent when an error occurs during WebSocket communication.
+
+        **Payload:**
+        ```javascript
+        socket.on('error', (error) => {
+          console.error(error);
+          // {
+          //   message: 'Patient not found',
+          //   code: 'PATIENT_NOT_FOUND'
+          // }
+        });
+        ```
+
+        ## Connection Events
+
+        ### `connect`
+        Fired when successfully connected to the server.
+
+        ```javascript
+        socket.on('connect', () => {
+          console.log('Connected to server:', socket.id);
+        });
+        ```
+
+        ### `disconnect`
+        Fired when disconnected from the server.
+
+        ```javascript
+        socket.on('disconnect', (reason) => {
+          console.log('Disconnected:', reason);
+        });
+        ```
+
+        ## Example Usage
+
+        ### Patient Client Example
+        ```javascript
+        import io from 'socket.io-client';
+
+        const socket = io('http://localhost:3001');
+
+        // Join patient room
+        socket.emit('joinPatientRoom', {
+          patientId: 'your-patient-id',
+          doctorId: 'doc1'
+        });
+
+        // Listen for queue updates
+        socket.on('queueUpdate', (data) => {
+          setQueuePosition(data.position);
+          setEstimatedWaitTime(data.estimatedWaitTime);
+        });
+
+        // Listen for status changes
+        socket.on('patientStatusUpdate', (data) => {
+          if (data.patientId === yourPatientId) {
+            setPatientStatus(data.status);
+          }
+        });
+        ```
+
+        ### Doctor Client Example
+        ```javascript
+        import io from 'socket.io-client';
+
+        const socket = io('http://localhost:3001');
+
+        // Join doctor room
+        socket.emit('joinDoctorRoom', {
+          doctorId: 'doc1'
+        });
+
+        // Listen for queue changes
+        socket.on('queueChanged', (data) => {
+          setPatientQueue(data.queue);
+        });
+
+        // Update patient status
+        const startConsultation = (patientId) => {
+          socket.emit('updatePatientStatus', {
+            patientId,
+            status: 'consulting'
+          });
+        };
+
+        // Toggle availability
+        const toggleAvailability = (isAvailable) => {
+          socket.emit('updateDoctorAvailability', {
+            doctorId: 'doc1',
+            isAvailable
+          });
+        };
+        ```
+
+        ## Room Structure
+
+        ### Patient Rooms
+        - **Room ID**: `doctor_{doctorId}`
+        - **Members**: All patients waiting for that specific doctor
+        - **Purpose**: Receive queue position updates, status changes
+
+        ### Doctor Rooms  
+        - **Room ID**: `doctor_{doctorId}`
+        - **Members**: The doctor and all their patients
+        - **Purpose**: Queue management, patient status updates
+
+        ## Error Handling
+
+        Always implement error handling for WebSocket events:
+
+        ```javascript
+        socket.on('error', (error) => {
+          console.error('WebSocket error:', error);
+          // Handle error appropriately in your UI
+          showErrorMessage(error.message);
+        });
+
+        socket.on('connect_error', (error) => {
+          console.error('Connection error:', error);
+          // Attempt to reconnect or show offline mode
+        });
+        ```
+
+        ## Reconnection Strategy
+
+        Socket.io handles automatic reconnection, but you can configure it:
+
+        ```javascript
+        const socket = io('http://localhost:3001', {
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          timeout: 20000,
+          transports: ['websocket', 'polling']
+        });
+        ```
+
+        ## Security Considerations
+
+        - Validate all incoming events on the server side
+        - Implement rate limiting for WebSocket events
+        - Authenticate users before joining rooms
+        - Sanitize all data before broadcasting to clients
+        - Use HTTPS/WSS in production environments
+
+      responses:
+        "101":
+          description: "WebSocket connection established"
+        "400":
+          description: "Bad request - invalid connection parameters"
+        "403":
+          description: "Forbidden - authentication required"
+        "429":
+          description: "Too many connection requests"

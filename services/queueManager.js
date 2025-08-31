@@ -56,8 +56,15 @@ class QueueManager {
     return patient;
   }
 
-  async updatePatientStatus(patientId, status) {
-    const validStatuses = ["waiting", "next", "consulting", "completed"];
+  async updatePatientStatus(patientId, status, reason = "") {
+    const validStatuses = [
+      "waiting",
+      "next",
+      "consulting",
+      "completed",
+      "late",
+    ];
+
     if (!validStatuses.includes(status)) {
       throw new Error(`Invalid status: ${status}`);
     }
@@ -69,9 +76,7 @@ class QueueManager {
 
     if (status === "consulting") {
       // Only one patient can be consulting at a time per doctor
-      const consultingPatients = await this.db.getWaitingPatients(
-        patient.doctor_id
-      );
+      const consultingPatients = await this.db.getWaitingPatients(doctorId);
       const currentlyConsulting = consultingPatients.find(
         (p) => p.status === "consulting"
       );
@@ -82,19 +87,13 @@ class QueueManager {
       }
     }
 
-    const updatedPatient = await this.db.updatePatientStatus(patientId, status);
-
-    // Auto-advance queue if consultation is completed
-    if (status === "completed") {
-      await this.autoAdvanceQueue(patient.doctor_id);
-    }
-
-    // Emit real-time updates
-    const roomId = `doctor_${patient.doctor_id}`;
-    this.io.to(roomId).emit("patientStatusUpdate", {
+    const updatedPatient = await this.db.updatePatientStatus(
       patientId,
       status,
-    });
+      reason
+    );
+
+    // Emit real-time updates
 
     await this.emitQueueUpdate(patient.doctor_id);
     await this.updateQueuePositions(patient.doctor_id);
@@ -263,7 +262,7 @@ class QueueManager {
 
       // Emit update for the next patient
       const roomId = `doctor_${doctorId}`;
-      this.io.to(roomId).emit("patientStatusUpdate", {
+      this.io.to(roomId).emit("patientStatusUpdated", {
         patientId: nextPatient.id,
         status: "next",
       });
