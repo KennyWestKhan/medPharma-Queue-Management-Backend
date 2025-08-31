@@ -189,8 +189,8 @@ function createPatientRoutes(queueManager) {
    *             properties:
    *               status:
    *                 type: string
-   *                 enum: [waiting, in_consultation, completed, late, removed]
-   *                 example: in_consultation
+   *                 enum: [waiting, consulting, completed, late, removed]
+   *                 example: consulting
    *               notes:
    *                 type: string
    *                 example: "Patient arrived late but still waiting"
