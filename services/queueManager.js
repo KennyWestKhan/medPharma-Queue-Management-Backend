@@ -382,6 +382,73 @@ class QueueManager {
       };
     }
   }
+  async emitConsultationStarted(patientId, doctorId) {
+    const patient = await this.db.getPatientById(patientId);
+    const doctor = await this.db.getDoctorById(doctorId);
+
+    // Emit to doctor's room
+    this.io.to(`doctor:${doctorId}`).emit("consultationStarted", {
+      patient,
+      doctor,
+      timestamp: new Date(),
+    });
+
+    // Emit to patient's room
+    this.io.to(`patient:${patientId}`).emit("consultationStarted", {
+      message: "Your consultation is starting now",
+      doctor: {
+        name: doctor.name,
+        specialization: doctor.specialization,
+      },
+      timestamp: new Date(),
+    });
+  }
+
+  async emitConsultationCompleted(patientId, doctorId) {
+    const patient = await this.db.getPatientById(patientId);
+    const doctor = await this.db.getDoctorById(doctorId);
+
+    // Emit to doctor's room
+    this.io.to(`doctor:${doctorId}`).emit("consultationCompleted", {
+      patient,
+      doctor,
+      timestamp: new Date(),
+    });
+
+    // Emit to patient's room
+    this.io.to(`patient:${patientId}`).emit("consultationCompleted", {
+      message: "Your consultation has been completed",
+      doctor: {
+        name: doctor.name,
+        specialization: doctor.specialization,
+      },
+      timestamp: new Date(),
+    });
+  }
+
+  async emitPatientRemoved(patientId, doctorId, reason) {
+    const patient = await this.db.getPatientById(patientId);
+    const doctor = await this.db.getDoctorById(doctorId);
+
+    // Emit to doctor's room
+    this.io.to(`doctor:${doctorId}`).emit("patientRemoved", {
+      patient,
+      doctor,
+      reason,
+      timestamp: new Date(),
+    });
+
+    // Emit to patient's room
+    this.io.to(`patient:${patientId}`).emit("patientRemoved", {
+      message: "You have been removed from the queue",
+      reason,
+      doctor: {
+        name: doctor.name,
+        specialization: doctor.specialization,
+      },
+      timestamp: new Date(),
+    });
+  }
 }
 
 module.exports = QueueManager;
