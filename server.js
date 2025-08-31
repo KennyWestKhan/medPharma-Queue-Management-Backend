@@ -19,7 +19,7 @@ const corsConfig =
         credentials: true,
       }
     : {
-        origin: true, // Allow all origins in development
+        origin: "*", // Allow all origins in development
         credentials: true,
       };
 
@@ -49,10 +49,22 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: corsConfig.origin,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   },
   transports: ["websocket", "polling"],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
+// Debug socket.io events
+io.engine.on("connection_error", (err) => {
+  console.log("Connection error:", err);
+});
+
+io.engine.on("headers", (headers, req) => {
+  console.log("Handshake headers:", headers);
 });
 
 const db = new Pool({
@@ -174,13 +186,16 @@ app.use("/api/patients", patientRoutes(queueManager));
 io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
-  socket.on("joinPatientRoom", async (data) => {
-    function validateUUID(id) {
-      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        id
-      );
-    }
+  let currentRooms = new Set();
 
+  function validateUUID(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      id
+    );
+  }
+
+  // Join patient's room with validation
+  socket.on("joinPatientRoom", async (data) => {
     try {
       if (!data || !data?.patientId) {
         throw new Error("Patient ID is required");
@@ -198,8 +213,6 @@ io.on("connection", (socket) => {
         throw new Error(`Patient ${patientId} not found`);
       }
 
-      console.info({ patient });
-
       const { doctor_id, name: patientName } = patient;
 
       if (!doctor_id) {
@@ -208,22 +221,30 @@ io.on("connection", (socket) => {
         );
       }
 
-      const roomId = setRoomId(doctor_id);
+      // Create unique rooms for patient and doctor-patient communication
+      const patientPrivateRoom = `patient:${patientId}`;
+      const doctorPatientRoom = `doctor:${doctor_id}:patient:${patientId}`;
 
-      const queueStatus = await queueManager.getPatientQueueStatus(patientId);
-
-      await socket.join(roomId);
+      // Join both rooms
+      await socket.join(patientPrivateRoom);
+      await socket.join(doctorPatientRoom);
+      currentRooms.add(patientPrivateRoom);
+      currentRooms.add(doctorPatientRoom);
 
       socket.userId = patientId;
       socket.userType = "patient";
       socket.doctorId = doctor_id;
+      socket.privateRoom = patientPrivateRoom;
+      socket.doctorPatientRoom = doctorPatientRoom;
 
-      console.log(`Patient ${patientId} joined room ${roomId}`);
+      console.log(
+        `Patient ${patientId} joined rooms: ${patientPrivateRoom}, ${doctorPatientRoom}`
+      );
 
+      const queueStatus = await queueManager.getPatientQueueStatus(patientId);
       socket.emit("queueUpdate", queueStatus);
     } catch (error) {
       console.error("Error in joinPatientRoom:", error);
-
       socket.emit("error", {
         message: error.message,
         code: error.code || "JOIN_ROOM_ERROR",
@@ -232,61 +253,117 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("reconnect", (attemptNumber) => {
-    console.log("🔄 Reconnected after", attemptNumber, "attempts");
-    this.isConnected = true;
-  });
-
+  // Join doctor's room with validation
   socket.on("joinDoctorRoom", async (data) => {
-    const { doctorId } = data;
-    const roomId = setRoomId(doctorId);
-
-    await socket.join(roomId);
-    socket.userId = doctorId;
-    socket.userType = "doctor";
-    socket.doctorId = doctorId;
-
-    console.log(`Doctor ${doctorId} joined room ${roomId}`);
-
     try {
+      const { doctorId } = data;
+
+      if (!doctorId) {
+        throw new Error(`Invalid doctor ID format: ${doctorId}`);
+      }
+
+      // Create doctor's private room
+      const doctorPrivateRoom = `doctor:${doctorId}`;
+      await socket.join(doctorPrivateRoom);
+      currentRooms.add(doctorPrivateRoom);
+
+      socket.userId = doctorId;
+      socket.userType = "doctor";
+      socket.doctorId = doctorId;
+      socket.privateRoom = doctorPrivateRoom;
+
+      console.log(`Doctor ${doctorId} joined room ${doctorPrivateRoom}`);
+
+      // Get queue and current patients
       const queue = await queueManager.getDoctorQueue(doctorId);
+
+      // Join individual rooms for each patient in the queue
+      for (const patient of queue) {
+        const doctorPatientRoom = `doctor:${doctorId}:patient:${patient.id}`;
+        await socket.join(doctorPatientRoom);
+        currentRooms.add(doctorPatientRoom);
+        console.log(`Doctor joined patient room: ${doctorPatientRoom}`);
+      }
+
       socket.emit("queueChanged", { queue });
-    } catch (error) {
-      socket.emit("error", { message: error.message });
-    }
-  });
 
-  socket.on("updatePatientStatus", async (data) => {
-    const { patientId, status } = data;
+      // Set up consultation event handlers for doctors
+      socket.on("startConsultation", async ({ patientId }) => {
+        if (socket.userType !== "doctor") return;
+        await queueManager.updatePatientStatus(patientId, "consulting");
+        // Send update only to specific patient's room
+        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+        io.to(doctorPatientRoom).emit("consultationStarted", {
+          patient: await queueManager.getPatient(patientId),
+          doctor: await queueManager.getDoctor(doctorId),
+        });
+      });
 
-    try {
-      await queueManager.updatePatientStatus(patientId, status);
-      console.log(`Updated patient ${patientId} status to ${status}`);
+      socket.on("completeConsultation", async ({ patientId }) => {
+        if (socket.userType !== "doctor") return;
+        await queueManager.updatePatientStatus(patientId, "completed");
+        // Send update only to specific patient's room
+        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+        io.to(doctorPatientRoom).emit("consultationCompleted", {
+          patient: await queueManager.getPatient(patientId),
+          doctor: await queueManager.getDoctor(doctorId),
+        });
+      });
+
+      socket.on("removePatient", async ({ patientId, reason }) => {
+        if (socket.userType !== "doctor") return;
+        await queueManager.removePatientFromQueue(patientId);
+        // Send update only to specific patient's room
+        const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+        io.to(doctorPatientRoom).emit("patientRemoved", {
+          patient: await queueManager.getPatient(patientId),
+          doctor: await queueManager.getDoctor(doctorId),
+          reason,
+        });
+      });
     } catch (error) {
-      console.error("Failed to update patient status:", error);
-      socket.emit("error", { message: error.message });
+      socket.emit("error", {
+        message: error.message,
+        code: error.code || "JOIN_ROOM_ERROR",
+        timestamp: new Date().toISOString(),
+      });
     }
   });
 
   socket.on("updateDoctorAvailability", async (data) => {
-    const { doctorId, isAvailable } = data;
-
     try {
+      const { doctorId, isAvailable } = data;
+      if (socket.userType !== "doctor" || socket.doctorId !== doctorId) return;
+
       await queueManager.updateDoctorAvailability(doctorId, isAvailable);
       console.log(`Updated doctor ${doctorId} availability to ${isAvailable}`);
     } catch (error) {
-      console.error("Failed to update doctor availability:", error);
-      socket.emit("error", { message: error.message });
+      socket.emit("error", {
+        message: error.message,
+        code: "UPDATE_AVAILABILITY_ERROR",
+        timestamp: new Date().toISOString(),
+      });
     }
+  });
+
+  socket.on("reconnect", (attemptNumber) => {
+    console.log("🔄 Reconnected after", attemptNumber, "attempts");
+    socket.emit("reconnected", { attemptNumber });
   });
 
   socket.on("leaveRoom", async (data) => {
     const { roomId } = data;
     await socket.leave(roomId);
+    currentRooms.delete(roomId);
     console.log(`Client ${socket.id} left room ${roomId}`);
   });
 
   socket.on("disconnect", () => {
+    // Cleanup all rooms on disconnect
+    currentRooms.forEach(async (roomId) => {
+      await socket.leave(roomId);
+    });
+    currentRooms.clear();
     console.log(`Client disconnected: ${socket.id}`);
   });
 });
