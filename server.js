@@ -5,6 +5,8 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
+const swaggerUi = require("swagger-ui-express");
+const { specs: swaggerSpec } = require("./config/swagger");
 const { Pool } = require("pg");
 const path = require("path");
 
@@ -80,6 +82,18 @@ const databaseService = new DatabaseService(db);
 const queueManager = new QueueManager(databaseService, io);
 
 // Middleware
+app.use(cors(corsConfig));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev"));
+
+// Swagger Documentation UI
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get("/swagger.json", (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.send(swaggerSpec);
+});
+
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -167,9 +181,15 @@ const limiter = rateLimit({
 });
 app.use("/api/", limiter);
 
-app.use(morgan("combined"));
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, { explorer: true })
+);
+app.get("/swagger.json", (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.send(swaggerSpec);
+});
 
 app.get("/health", (req, res) => {
   res.json({
