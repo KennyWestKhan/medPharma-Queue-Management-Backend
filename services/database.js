@@ -214,7 +214,13 @@ class DatabaseService {
 
   async updatePatientStatus(patientId, status, reason = "") {
     let updateFields = "status = $1";
-    let params = [status, patientId, reason];
+    let params = [status, patientId];
+
+    console.log("Update patient status called with:", {
+      patientId,
+      status,
+      reason,
+    });
 
     if (status === "consulting") {
       updateFields += ", consultation_started_at = CURRENT_TIMESTAMP";
