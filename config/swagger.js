@@ -8,8 +8,6 @@ const swaggerDefinition = {
     title: "MedPharma Queue Management API",
     version: "1.0.0",
     description: `
-# Medp Queue Management System API
-
 A comprehensive REST API for managing online consultation queues with real-time WebSocket communication.
 
 ## Features

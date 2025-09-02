@@ -39,7 +39,7 @@ const doctorRoutes = require("./routes/doctors");
 const patientRoutes = require("./routes/patients");
 const QueueManager = require("./services/queueManager");
 const DatabaseService = require("./services/database");
-const { setRoomId } = require("./services");
+const { getDoctorPatientRoom, getDoctorRoom } = require("./services");
 
 const app = express();
 
@@ -242,12 +242,12 @@ io.on("connection", (socket) => {
       }
 
       const newStatus = event === "startConsultation" ? "consulting" : status;
-      const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
 
       await queueManager.updatePatientStatus(patientId, newStatus, reason);
 
       const patient = await queueManager.getPatient(patientId);
       const doctor = await queueManager.getDoctor(doctorId);
+      const doctorPatientRoom = getDoctorPatientRoom(doctorId, patientId);
 
       if (status === "startConsultation") {
         io.to(doctorPatientRoom).emit("consultationStarted", {
@@ -255,7 +255,7 @@ io.on("connection", (socket) => {
           doctor,
         });
       } else if (status === "completed") {
-        await this.autoAdvanceQueue(doctorId); // Auto-advance queue if consultation is completed
+        await queueManager.autoAdvanceQueue(doctorId); // Auto-advance queue if consultation is completed
       } else {
         io.to(doctorPatientRoom).emit("patientStatusUpdated", {
           patient,
@@ -267,7 +267,7 @@ io.on("connection", (socket) => {
       }
 
       const updatedQueue = await queueManager.getDoctorQueue(doctorId);
-      io.to(`doctor:${doctorId}`).emit("queueChanged", {
+      io.to(getDoctorRoom(doctorId)).emit("queueChanged", {
         queue: updatedQueue,
       });
 

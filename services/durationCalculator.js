@@ -30,11 +30,9 @@ class DurationCalculator {
       case 1:
         return 1.1; // Monday - slower start
       case 2:
-        return 1.0; // Tuesday - optimal
       case 3:
-        return 1.0; // Wednesday - optimal
       case 4:
-        return 1.0; // Thursday - optimal
+        return 1.0; // Tuesday Wednesday Thursday - optimal
       case 5:
         return 1.05; // Friday - slightly distracted
       case 6:

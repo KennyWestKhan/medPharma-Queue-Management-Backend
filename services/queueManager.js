@@ -1,3 +1,4 @@
+const { getDoctorRoom, getDoctorPatientRoom } = require(".");
 const DurationCalculator = require("./durationCalculator");
 class QueueManager {
   constructor(databaseService, socketIo) {
@@ -202,7 +203,7 @@ class QueueManager {
     );
 
     // Emit real-time update
-    const roomId = `doctor_${doctorId}`;
+    const roomId = getDoctorRoom(doctorId);
     this.io.to(roomId).emit("doctorAvailabilityUpdate", {
       doctorId,
       isAvailable,
@@ -261,7 +262,7 @@ class QueueManager {
       await this.db.updatePatientStatus(nextPatient.id, "next");
 
       // Emit update for the next patient
-      const roomId = `doctor_${doctorId}`;
+      const roomId = getDoctorPatientRoom(doctorId, nextPatient.id);
       this.io.to(roomId).emit("patientStatusUpdated", {
         patientId: nextPatient.id,
         status: "next",
@@ -292,7 +293,7 @@ class QueueManager {
 
   async emitQueueUpdate(doctorId) {
     try {
-      const roomId = `doctor_${doctorId}`;
+      const roomId = getDoctorRoom(doctorId);
       const queue = await this.db.getDoctorQueue(doctorId);
       this.io.to(roomId).emit("queueChanged", { queue });
     } catch (error) {
@@ -307,15 +308,13 @@ class QueueManager {
 
       if (!doctor) return;
 
-      const roomId = `doctor_${doctorId}`;
-
       waitingPatients.forEach((patient, index) => {
         const position = index + 1;
         const estimatedWaitTime =
           position > 0 ? (position - 1) * doctor.average_consultation_time : 0;
 
         const { id: patientId } = patient;
-        this.io.to(roomId).emit("queueUpdate", {
+        this.io.to(getDoctorRoom(doctorId, patientId)).emit("queueUpdate", {
           patientId,
           position,
           estimatedWaitTime,
@@ -328,7 +327,7 @@ class QueueManager {
 
   async emitPatientAdded(patientId, doctorId) {
     try {
-      const roomId = `doctor_${doctorId}`;
+      const roomId = getDoctorRoom(doctorId);
       const patient = await this.db.getPatientById(patientId);
 
       if (patient) {
@@ -341,7 +340,7 @@ class QueueManager {
 
   async emitPatientRemoved(patientId, doctorId) {
     try {
-      const roomId = `doctor_${doctorId}`;
+      const roomId = getDoctorRoom(doctorId);
       this.io.to(roomId).emit("patientRemoved", { patientId });
     } catch (error) {
       console.error("Failed to emit patient removed:", error);
