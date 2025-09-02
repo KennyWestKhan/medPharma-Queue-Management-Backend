@@ -71,6 +71,8 @@ class QueueManager {
     }
 
     const patient = await this.db.getPatientById(patientId);
+    const doctorId = patient?.doctor_id;
+
     if (!patient) {
       throw new Error(`Patient with ID ${patientId} not found`);
     }
