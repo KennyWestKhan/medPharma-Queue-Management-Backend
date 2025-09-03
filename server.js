@@ -39,7 +39,11 @@ const doctorRoutes = require("./routes/doctors");
 const patientRoutes = require("./routes/patients");
 const QueueManager = require("./services/queueManager");
 const DatabaseService = require("./services/database");
-const { getDoctorPatientRoom, getDoctorRoom } = require("./services");
+const {
+  getDoctorPatientRoom,
+  getDoctorRoom,
+  getPatientPrivateRoom,
+} = require("./services");
 
 const app = express();
 

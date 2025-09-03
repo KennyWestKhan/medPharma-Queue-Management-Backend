@@ -1,4 +1,8 @@
-const { getDoctorRoom, getDoctorPatientRoom } = require(".");
+const {
+  getDoctorRoom,
+  getDoctorPatientRoom,
+  getPatientPrivateRoom,
+} = require(".");
 const DurationCalculator = require("./durationCalculator");
 class QueueManager {
   constructor(databaseService, socketIo) {
