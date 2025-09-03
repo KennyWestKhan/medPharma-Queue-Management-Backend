@@ -245,17 +245,12 @@ io.on("connection", (socket) => {
 
       await queueManager.updatePatientStatus(patientId, newStatus, reason);
 
-      const patient = await queueManager.getPatient(patientId);
-      const doctor = await queueManager.getDoctor(doctorId);
       const doctorPatientRoom = getDoctorPatientRoom(doctorId, patientId);
 
       if (status === "startConsultation") {
-        io.to(doctorPatientRoom).emit("consultationStarted", {
-          patient,
-          doctor,
-        });
+        await queueManager.emitConsultationStarted(doctorId, patientId);
       } else if (status === "completed") {
-        await queueManager.autoAdvanceQueue(doctorId); // Auto-advance queue if consultation is completed
+        await queueManager.emitConsultationCompleted(doctorId, patientId);
       } else {
         io.to(doctorPatientRoom).emit("patientStatusUpdated", {
           patient,
@@ -265,11 +260,6 @@ io.on("connection", (socket) => {
           reason,
         });
       }
-
-      const updatedQueue = await queueManager.getDoctorQueue(doctorId);
-      io.to(getDoctorRoom(doctorId)).emit("queueChanged", {
-        queue: updatedQueue,
-      });
 
       console.log(`${event} handled successfully`);
     } catch (error) {
@@ -441,8 +431,8 @@ io.on("connection", (socket) => {
       }
 
       // Create unique rooms for patient and doctor-patient communication
-      const patientPrivateRoom = `patient:${patientId}`;
-      const doctorPatientRoom = `doctor:${doctor_id}:patient:${patientId}`;
+      const patientPrivateRoom = getPatientPrivateRoom(patientId);
+      const doctorPatientRoom = getDoctorPatientRoom(doctor_id, patientId);
 
       // Join both rooms
       await socket.join(patientPrivateRoom);

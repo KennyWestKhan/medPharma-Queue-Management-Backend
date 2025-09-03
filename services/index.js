@@ -9,3 +9,7 @@ export function getDoctorPatientRoom(doctorId, patientId) {
 export function getDoctorRoom(doctorId) {
   return `doctor:${doctorId}`;
 }
+
+export function getPatientPrivateRoom(patientId) {
+  return `patient:${patientId}`;
+}

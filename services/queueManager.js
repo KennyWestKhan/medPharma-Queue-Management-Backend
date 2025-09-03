@@ -406,15 +406,20 @@ class QueueManager {
     const patient = await this.db.getPatientById(patientId);
     const doctor = await this.db.getDoctorById(doctorId);
 
+    const patientPrivateRoom = getPatientPrivateRoom(patientId);
+    const doctorRoom = getDoctorRoom(doctorId);
+
     // Emit to doctor's room
-    this.io.to(`doctor:${doctorId}`).emit("consultationCompleted", {
+    this.io.to(doctorRoom).emit("consultationCompleted", {
       patient,
       doctor,
       timestamp: new Date(),
     });
 
+    await this.autoAdvanceQueue(doctorId);
+
     // Emit to patient's room
-    this.io.to(`patient:${patientId}`).emit("consultationCompleted", {
+    this.io.to(patientPrivateRoom).emit("consultationCompleted", {
       message: "Your consultation has been completed",
       doctor: {
         name: doctor.name,
@@ -428,8 +433,11 @@ class QueueManager {
     const patient = await this.db.getPatientById(patientId);
     const doctor = await this.db.getDoctorById(doctorId);
 
+    const patientPrivateRoom = getPatientPrivateRoom(patientId);
+    const doctorRoom = getDoctorRoom(doctorId);
+
     // Emit to doctor's room
-    this.io.to(`doctor:${doctorId}`).emit("patientRemoved", {
+    this.io.to(doctorRoom).emit("patientRemoved", {
       patient,
       doctor,
       reason,
@@ -437,7 +445,7 @@ class QueueManager {
     });
 
     // Emit to patient's room
-    this.io.to(`patient:${patientId}`).emit("patientRemoved", {
+    this.io.to(patientPrivateRoom).emit("patientRemoved", {
       message: "You have been removed from the queue",
       reason,
       doctor: {
