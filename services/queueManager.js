@@ -146,12 +146,10 @@ class QueueManager {
       throw new Error(`Patient with ID ${patientId} not found`);
     }
 
-    let position = 0;
+    let position = (await this.db.getPatientQueuePosition(patientId)) || 0;
     let estimatedWaitTime = 0;
 
     if (patient.status === "waiting" && position > 0) {
-      position = await this.db.getPatientQueuePosition(patientId);
-
       const patientsAhead = position - 1;
       estimatedWaitTime = patientsAhead * patient.average_consultation_time;
 

@@ -312,9 +312,10 @@ io.on("connection", (socket) => {
 
       const patient = await queueManager.getPatient(patientId);
       const doctor = await queueManager.getDoctor(doctorId);
+      const doctorRoom = getDoctorRoom(doctorId);
 
       // Send update to specific patient's room
-      const doctorPatientRoom = `doctor:${doctorId}:patient:${patientId}`;
+      const doctorPatientRoom = `${doctorRoom}:patient:${patientId}`;
       io.to(doctorPatientRoom).emit("consultationCompleted", {
         patient,
         doctor,
@@ -322,7 +323,7 @@ io.on("connection", (socket) => {
 
       // Update doctor's queue
       const updatedQueue = await queueManager.getDoctorQueue(doctorId);
-      io.to(`doctor:${doctorId}`).emit("queueChanged", { queue: updatedQueue });
+      io.to(doctorRoom).emit("queueChanged", { queue: updatedQueue });
 
       console.log("Consultation completed successfully");
     } catch (error) {
@@ -460,6 +461,7 @@ io.on("connection", (socket) => {
       );
 
       const queueStatus = await queueManager.getPatientQueueStatus(patientId);
+
       socket.emit("queueUpdate", queueStatus);
     } catch (error) {
       console.error("Error in joinPatientRoom:", error);
